@@ -3,6 +3,7 @@ import { CreditCard, Calendar, Lock, User } from 'lucide-react';
 import { CardBrandIcon } from '@/components/icons/CardBrandIcon';
 import { InstallmentSelect } from './InstallmentSelect';
 import { SecurityBadge } from './SecurityBadge';
+import { CreditCard3D } from './CreditCard3D';
 import {
   detectCardBrand,
   detectBank,
@@ -37,6 +38,7 @@ export function CardForm({ total, onSubmit, isProcessing }: CardFormProps) {
   const [installments, setInstallments] = useState(1);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [isCardFlipped, setIsCardFlipped] = useState(false);
 
   const cardBrand: CardBrandInfo = useMemo(() => detectCardBrand(cardNumber), [cardNumber]);
   const bankInfo: BankInfo | null = useMemo(() => detectBank(cardNumber), [cardNumber]);
@@ -138,25 +140,16 @@ export function CardForm({ total, onSubmit, isProcessing }: CardFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      {/* Card Brand & Bank Detection */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <CardBrandIcon brand={cardBrand.brand} className="w-12 h-8" />
-          {cardBrand.brand !== 'unknown' && (
-            <span className="text-sm font-medium text-muted-foreground">
-              {cardBrand.name}
-            </span>
-          )}
-        </div>
-        {bankInfo && (
-          <div 
-            className="px-3 py-1 rounded-full text-xs font-medium"
-            style={{ backgroundColor: `${bankInfo.color}20`, color: bankInfo.color }}
-          >
-            {bankInfo.name}
-          </div>
-        )}
-      </div>
+      {/* 3D Credit Card Preview */}
+      <CreditCard3D
+        cardNumber={cardNumber}
+        cardHolder={cardHolder}
+        expiryDate={expiryDate}
+        cvv={cvv}
+        cardBrand={cardBrand}
+        bankInfo={bankInfo}
+        isFlipped={isCardFlipped}
+      />
 
       {/* Card Number */}
       <div>
@@ -237,7 +230,11 @@ export function CardForm({ total, onSubmit, isProcessing }: CardFormProps) {
               inputMode="numeric"
               value={cvv}
               onChange={handleCvvChange}
-              onBlur={() => handleBlur('cvv')}
+              onFocus={() => setIsCardFlipped(true)}
+              onBlur={() => {
+                setIsCardFlipped(false);
+                handleBlur('cvv');
+              }}
               placeholder={cardBrand.brand === 'amex' ? '0000' : '000'}
               className={`checkout-input pl-12 ${touched.cvv && errors.cvv ? 'border-destructive' : ''}`}
               autoComplete="cc-csc"
