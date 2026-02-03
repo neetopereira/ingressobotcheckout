@@ -24,7 +24,7 @@ interface MercadoPagoInstance {
   getIdentificationTypes: () => Promise<IdentificationType[]>;
   getPaymentMethods: (options: { bin: string }) => Promise<{ results: PaymentMethod[] }>;
   getIssuers: (options: { paymentMethodId: string; bin: string }) => Promise<Issuer[]>;
-  getInstallments: (options: { amount: string; bin: string; paymentTypeId?: string }) => Promise<InstallmentResponse[]>;
+  getInstallments: (options: { amount: string; bin: string }) => Promise<InstallmentResponse[]>;
 }
 
 interface MercadoPagoField {
@@ -44,20 +44,15 @@ interface PaymentMethod {
   id: string;
   name: string;
   payment_type_id: string;
-  thumbnail: string;
-  secure_thumbnail: string;
 }
 
 interface Issuer {
   id: string;
   name: string;
-  thumbnail: string;
-  secure_thumbnail: string;
 }
 
 interface InstallmentResponse {
   payment_method_id: string;
-  payment_type_id: string;
   issuer: { id: string; name: string };
   payer_costs: PayerCost[];
 }
@@ -65,8 +60,6 @@ interface InstallmentResponse {
 interface PayerCost {
   installments: number;
   installment_rate: number;
-  discount_rate: number;
-  labels: string[];
   installment_amount: number;
   total_amount: number;
   recommended_message: string;
@@ -78,6 +71,35 @@ interface CardFormProps {
   onSuccess: () => void;
 }
 
+interface FieldErrors {
+  cardNumber: string | null;
+  expirationDate: string | null;
+  securityCode: string | null;
+  cardHolder: string | null;
+  docNumber: string | null;
+}
+
+// Error messages
+const ERROR_MESSAGES: Record<string, Record<string, string>> = {
+  cardNumber: {
+    empty: 'Digite o número do cartão',
+    invalid: 'Número do cartão inválido',
+    incomplete: 'Número do cartão incompleto',
+    invalid_type: 'Bandeira não suportada',
+  },
+  expirationDate: {
+    empty: 'Digite a validade',
+    invalid: 'Validade inválida',
+    incomplete: 'Validade incompleta',
+    expired: 'Cartão expirado',
+  },
+  securityCode: {
+    empty: 'Digite o CVV',
+    invalid: 'CVV inválido',
+    incomplete: 'CVV incompleto',
+  },
+};
+
 // SDK Loader
 const loadMercadoPagoSDK = (): Promise<void> => {
   return new Promise((resolve, reject) => {
@@ -85,12 +107,11 @@ const loadMercadoPagoSDK = (): Promise<void> => {
       resolve();
       return;
     }
-
     const script = document.createElement('script');
     script.src = 'https://sdk.mercadopago.com/js/v2';
     script.async = true;
     script.onload = () => resolve();
-    script.onerror = () => reject(new Error('Failed to load MercadoPago SDK'));
+    script.onerror = () => reject(new Error('Falha ao carregar SDK'));
     document.body.appendChild(script);
   });
 };
@@ -103,8 +124,8 @@ declare global {
 
 export function CardForm({ amount, items, onSuccess }: CardFormProps) {
   const { orderId } = useParams();
-  
-  // SDK & Fields Refs
+
+  // Refs
   const mpRef = useRef<MercadoPagoInstance | null>(null);
   const cardNumberFieldRef = useRef<MercadoPagoField | null>(null);
   const expirationFieldRef = useRef<MercadoPagoField | null>(null);
@@ -117,6 +138,15 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
   const [docNumber, setDocNumber] = useState('');
   const [installments, setInstallments] = useState(1);
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // Field Errors
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({
+    cardNumber: null,
+    expirationDate: null,
+    securityCode: null,
+    cardHolder: null,
+    docNumber: null,
+  });
 
   // Detected Data
   const [detectedBin, setDetectedBin] = useState('');
@@ -148,6 +178,16 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
     outline: 'none',
   };
 
+  // Set field error
+  const setFieldError = (field: keyof FieldErrors, errorCode: string | null) => {
+    if (!errorCode) {
+      setFieldErrors(prev => ({ ...prev, [field]: null }));
+      return;
+    }
+    const message = ERROR_MESSAGES[field]?.[errorCode] || 'Campo inválido';
+    setFieldErrors(prev => ({ ...prev, [field]: message }));
+  };
+
   // Initialize SDK
   useEffect(() => {
     let mounted = true;
@@ -155,7 +195,6 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
     const initSDK = async () => {
       try {
         await loadMercadoPagoSDK();
-        
         if (!mounted) return;
 
         const publicKey = import.meta.env.VITE_MP_PUBLIC_KEY;
@@ -171,9 +210,7 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
         const idTypes = await mp.getIdentificationTypes();
         if (mounted) {
           setIdentificationTypes(idTypes);
-          if (idTypes.length > 0) {
-            setDocType(idTypes[0].id);
-          }
+          if (idTypes.length > 0) setDocType(idTypes[0].id);
         }
 
         // Create Secure Fields
@@ -201,7 +238,17 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
         expirationFieldRef.current = expirationField;
         securityCodeFieldRef.current = securityCodeField;
 
-        // Event: BIN Change (Brand Detection)
+        // Card Number Events
+        cardNumberField.on('error', (error: { message?: string; code?: string }) => {
+          setFieldError('cardNumber', error.code || 'invalid');
+        });
+        cardNumberField.on('validityChange', (data: { errorMessages?: Array<{ code: string }> }) => {
+          if (data.errorMessages && data.errorMessages.length > 0) {
+            setFieldError('cardNumber', data.errorMessages[0].code);
+          } else {
+            setFieldError('cardNumber', null);
+          }
+        });
         cardNumberField.on('binChange', async (data: { bin: string }) => {
           if (!data.bin || data.bin.length < 6) {
             setDetectedBin('');
@@ -215,23 +262,18 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
           setDetectedBin(data.bin);
 
           try {
-            // Get Payment Method
             const paymentMethods = await mp.getPaymentMethods({ bin: data.bin });
             if (paymentMethods.results.length > 0) {
               const pm = paymentMethods.results[0];
               setPaymentMethodId(pm.id);
 
-              // Get Issuers
               const issuersList = await mp.getIssuers({
                 paymentMethodId: pm.id,
                 bin: data.bin,
               });
               setIssuers(issuersList);
-              if (issuersList.length > 0) {
-                setIssuerId(issuersList[0].id);
-              }
+              if (issuersList.length > 0) setIssuerId(issuersList[0].id);
 
-              // Get Installments
               const installmentsData = await mp.getInstallments({
                 amount: String(amount),
                 bin: data.bin,
@@ -244,30 +286,45 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
             console.error('Error fetching payment data:', error);
           }
         });
-
-        // Visual updates for 3D card
         cardNumberField.on('change', (data: { cardNumber?: string }) => {
-          if (data.cardNumber) {
-            setDisplayCardNumber(formatCardNumber(data.cardNumber));
-          }
+          if (data.cardNumber) setDisplayCardNumber(formatCardNumber(data.cardNumber));
         });
 
+        // Expiration Events
+        expirationField.on('error', (error: { code?: string }) => {
+          setFieldError('expirationDate', error.code || 'invalid');
+        });
+        expirationField.on('validityChange', (data: { errorMessages?: Array<{ code: string }> }) => {
+          if (data.errorMessages && data.errorMessages.length > 0) {
+            setFieldError('expirationDate', data.errorMessages[0].code);
+          } else {
+            setFieldError('expirationDate', null);
+          }
+        });
         expirationField.on('change', (data: { expirationDate?: string }) => {
           if (data.expirationDate) {
             setDisplayExpiry(formatExpiryDate(data.expirationDate.replace('/', '')));
           }
         });
 
+        // Security Code Events
+        securityCodeField.on('error', (error: { code?: string }) => {
+          setFieldError('securityCode', error.code || 'invalid');
+        });
+        securityCodeField.on('validityChange', (data: { errorMessages?: Array<{ code: string }> }) => {
+          if (data.errorMessages && data.errorMessages.length > 0) {
+            setFieldError('securityCode', data.errorMessages[0].code);
+          } else {
+            setFieldError('securityCode', null);
+          }
+        });
         securityCodeField.on('focus', () => setIsCardFlipped(true));
         securityCodeField.on('blur', () => setIsCardFlipped(false));
         securityCodeField.on('change', (data: { securityCode?: string }) => {
-          if (data.securityCode) {
-            setDisplayCvv(data.securityCode);
-          }
+          if (data.securityCode) setDisplayCvv(data.securityCode);
         });
 
         if (mounted) setSdkLoaded(true);
-
       } catch (error) {
         console.error('SDK Init Error:', error);
         toast.error('Erro ao carregar sistema de pagamento');
@@ -287,7 +344,7 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
   // Handle Issuer Change
   const handleIssuerChange = useCallback(async (newIssuerId: string) => {
     setIssuerId(newIssuerId);
-    
+
     if (mpRef.current && detectedBin) {
       try {
         const installmentsData = await mpRef.current.getInstallments({
@@ -308,6 +365,29 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
     }
   }, [amount, detectedBin]);
 
+  // Validate Local Fields
+  const validateLocalFields = (): boolean => {
+    let valid = true;
+    const newErrors = { ...fieldErrors };
+
+    if (!cardHolder.trim() || cardHolder.trim().split(' ').length < 2) {
+      newErrors.cardHolder = 'Digite o nome completo';
+      valid = false;
+    } else {
+      newErrors.cardHolder = null;
+    }
+
+    if (!docNumber.trim() || docNumber.replace(/\D/g, '').length < 11) {
+      newErrors.docNumber = 'Documento inválido';
+      valid = false;
+    } else {
+      newErrors.docNumber = null;
+    }
+
+    setFieldErrors(newErrors);
+    return valid;
+  };
+
   // Submit Handler
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -317,14 +397,20 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
       return;
     }
 
-    // Validation
-    if (!cardHolder.trim() || cardHolder.trim().split(' ').length < 2) {
-      toast.error('Digite o nome completo como está no cartão');
+    // Check secure field errors
+    const hasSecureFieldErrors = 
+      fieldErrors.cardNumber || 
+      fieldErrors.expirationDate || 
+      fieldErrors.securityCode;
+
+    if (hasSecureFieldErrors) {
+      toast.error('Corrija os campos em vermelho');
       return;
     }
 
-    if (!docNumber.trim()) {
-      toast.error('Digite o número do documento');
+    // Validate local fields
+    if (!validateLocalFields()) {
+      toast.error('Preencha todos os campos corretamente');
       return;
     }
 
@@ -336,7 +422,6 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
     setIsProcessing(true);
 
     try {
-      // Create Card Token
       const tokenResponse = await mpRef.current.fields.createCardToken({
         cardholderName: cardHolder,
         identificationType: docType,
@@ -345,7 +430,6 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
 
       const selectedInstallment = payerCosts.find(pc => pc.installments === installments);
 
-      // Send to Backend (Orders API structure)
       const backendResponse = await fetch(`${import.meta.env.VITE_API_URL}/payment/card`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -381,12 +465,29 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
         toast.success('Pagamento Confirmado!');
         onSuccess();
       } else {
-        toast.error(`Pagamento não aprovado: ${result.status_detail || 'Verifique os dados do cartão'}`);
+        toast.error(`Não aprovado: ${result.status_detail || 'Verifique os dados'}`);
       }
-
     } catch (error: any) {
       console.error('Payment Error:', error);
-      toast.error(error.message || 'Erro ao processar pagamento');
+      
+      // Handle specific token creation errors
+      if (error.cause) {
+        const causes = Array.isArray(error.cause) ? error.cause : [error.cause];
+        causes.forEach((cause: { code?: string; description?: string }) => {
+          if (cause.code === '316') {
+            setFieldError('cardHolder', 'Nome inválido');
+          } else if (cause.code === '324') {
+            setFieldError('docNumber', 'Documento inválido');
+          } else if (cause.code === 'E301') {
+            setFieldError('cardNumber', 'invalid');
+          } else if (cause.code === 'E302') {
+            setFieldError('securityCode', 'invalid');
+          }
+        });
+        toast.error('Verifique os dados do cartão');
+      } else {
+        toast.error(error.message || 'Erro ao processar pagamento');
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -396,15 +497,13 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
   const formatDocNumber = (value: string) => {
     const digits = value.replace(/\D/g, '');
     if (docType === 'CPF') {
-      return digits
-        .slice(0, 11)
+      return digits.slice(0, 11)
         .replace(/(\d{3})(\d)/, '$1.$2')
         .replace(/(\d{3})(\d)/, '$1.$2')
         .replace(/(\d{3})(\d{1,2})$/, '$1-$2');
     }
     if (docType === 'CNPJ') {
-      return digits
-        .slice(0, 14)
+      return digits.slice(0, 14)
         .replace(/(\d{2})(\d)/, '$1.$2')
         .replace(/(\d{3})(\d)/, '$1.$2')
         .replace(/(\d{3})(\d)/, '$1/$2')
@@ -413,7 +512,7 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
     return digits;
   };
 
-  // Installment Options for InstallmentSelect component
+  // Installment Options
   const installmentOptions = payerCosts.map((pc) => ({
     installments: pc.installments,
     value: pc.installment_amount,
@@ -421,6 +520,17 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
     interestRate: pc.installment_rate,
     hasInterest: pc.installment_rate > 0,
   }));
+
+  // Error Display Component
+  const FieldErrorMessage = ({ error }: { error: string | null }) => {
+    if (!error) return null;
+    return (
+      <p className="mt-1.5 text-xs text-destructive flex items-center gap-1">
+        <AlertCircle className="w-3 h-3" />
+        {error}
+      </p>
+    );
+  };
 
   if (!sdkLoaded) {
     return (
@@ -444,7 +554,7 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
         isFlipped={isCardFlipped}
       />
 
-      {/* Secure Field: Card Number */}
+      {/* Card Number */}
       <div>
         <label className="block text-sm font-medium text-muted-foreground mb-2">
           Número do Cartão
@@ -453,14 +563,20 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
           <CreditCard className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground z-10" />
           <div
             id="cardNumber-container"
-            className="checkout-input pl-12 min-h-[56px] flex items-center"
+            className={`checkout-input pl-12 min-h-[56px] flex items-center ${
+              fieldErrors.cardNumber ? 'border-destructive' : ''
+            }`}
           />
         </div>
-        {detectedBin && paymentMethodId && (
-          <p className="mt-1.5 text-xs text-primary flex items-center gap-1">
-            <Shield className="w-3 h-3" />
-            {cardBrand.name} detectado
-          </p>
+        {fieldErrors.cardNumber ? (
+          <FieldErrorMessage error={fieldErrors.cardNumber} />
+        ) : (
+          detectedBin && paymentMethodId && (
+            <p className="mt-1.5 text-xs text-primary flex items-center gap-1">
+              <Shield className="w-3 h-3" />
+              {cardBrand.name} detectado
+            </p>
+          )
         )}
       </div>
 
@@ -474,11 +590,17 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
           <input
             type="text"
             value={cardHolder}
-            onChange={(e) => setCardHolder(e.target.value.toUpperCase())}
+            onChange={(e) => {
+              setCardHolder(e.target.value.toUpperCase());
+              if (fieldErrors.cardHolder) setFieldErrors(prev => ({ ...prev, cardHolder: null }));
+            }}
             placeholder="NOME COMO ESTÁ NO CARTÃO"
-            className="checkout-input pl-12 uppercase min-h-[56px]"
+            className={`checkout-input pl-12 uppercase min-h-[56px] ${
+              fieldErrors.cardHolder ? 'border-destructive' : ''
+            }`}
           />
         </div>
+        <FieldErrorMessage error={fieldErrors.cardHolder} />
       </div>
 
       {/* Expiry & CVV */}
@@ -489,8 +611,11 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
           </label>
           <div
             id="expirationDate-container"
-            className="checkout-input min-h-[56px] flex items-center px-4"
+            className={`checkout-input min-h-[56px] flex items-center px-4 ${
+              fieldErrors.expirationDate ? 'border-destructive' : ''
+            }`}
           />
+          <FieldErrorMessage error={fieldErrors.expirationDate} />
         </div>
         <div>
           <label className="block text-sm font-medium text-muted-foreground mb-2">
@@ -498,8 +623,11 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
           </label>
           <div
             id="securityCode-container"
-            className="checkout-input min-h-[56px] flex items-center px-4"
+            className={`checkout-input min-h-[56px] flex items-center px-4 ${
+              fieldErrors.securityCode ? 'border-destructive' : ''
+            }`}
           />
+          <FieldErrorMessage error={fieldErrors.securityCode} />
         </div>
       </div>
 
@@ -528,14 +656,20 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
           <input
             type="text"
             value={docNumber}
-            onChange={(e) => setDocNumber(formatDocNumber(e.target.value))}
+            onChange={(e) => {
+              setDocNumber(formatDocNumber(e.target.value));
+              if (fieldErrors.docNumber) setFieldErrors(prev => ({ ...prev, docNumber: null }));
+            }}
             placeholder={docType === 'CPF' ? '000.000.000-00' : '00.000.000/0000-00'}
-            className="checkout-input min-h-[56px]"
+            className={`checkout-input min-h-[56px] ${
+              fieldErrors.docNumber ? 'border-destructive' : ''
+            }`}
           />
+          <FieldErrorMessage error={fieldErrors.docNumber} />
         </div>
       </div>
 
-      {/* Issuer Select (if multiple) */}
+      {/* Issuer Select */}
       {issuers.length > 1 && (
         <div>
           <label className="block text-sm font-medium text-muted-foreground mb-2">
@@ -565,7 +699,7 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
       ) : (
         <div className="p-4 rounded-lg bg-muted/50 border border-border text-center">
           <p className="text-sm text-muted-foreground">
-            Digite o número do cartão para ver as opções de parcelamento
+            Digite o número do cartão para ver as parcelas
           </p>
         </div>
       )}
