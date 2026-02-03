@@ -2,7 +2,8 @@ import { useState, useMemo } from 'react';
 import { CreditCard, Calendar, Lock, User, AlertCircle } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import { toast } from "sonner";
-import { initMercadoPago, createCardToken } from "@mercadopago/sdk-react"; 
+// Mantemos o init para garantir o Device ID (segurança em segundo plano)
+import { initMercadoPago } from "@mercadopago/sdk-react";
 
 import { InstallmentSelect } from './InstallmentSelect';
 import { SecurityBadge } from './SecurityBadge';
@@ -19,7 +20,7 @@ import {
   BankInfo,
 } from '@/lib/cardUtils';
 
-// Inicializa o Mercado Pago
+// Inicializa para carregar scripts de segurança
 initMercadoPago(import.meta.env.VITE_MP_PUBLIC_KEY);
 
 interface CardFormProps {
@@ -45,27 +46,24 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
   const bankInfo: BankInfo | null = useMemo(() => detectBank(cardNumber), [cardNumber]);
   const installmentOptions = useMemo(() => calculateInstallments(amount), [amount]);
 
+  // --- Handlers (Iguais) ---
   const handleCardNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const formatted = formatCardNumber(e.target.value, cardBrand.brand);
     const maxLength = cardBrand.brand === 'amex' ? 17 : 19;
     setCardNumber(formatted.slice(0, maxLength));
   };
-
   const handleExpiryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const formatted = formatExpiryDate(e.target.value);
     setExpiryDate(formatted.slice(0, 5));
   };
-
   const handleCvvChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value.replace(/\D/g, '');
     setCvv(value.slice(0, cardBrand.cvvLength));
   };
-
   const handleBlur = (field: string) => {
     setTouched(prev => ({ ...prev, [field]: true }));
     validateField(field);
   };
-
   const validateField = (field: string) => {
     const newErrors = { ...errors };
     switch (field) {
@@ -78,9 +76,43 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
     return Object.keys(newErrors).length === 0;
   };
 
+  // --- FUNÇÃO DE TOKENIZAÇÃO MANUAL ---
+  const createCardTokenManual = async () => {
+    const [month, year] = expiryDate.split('/');
+    const cleanCardNumber = cardNumber.replace(/\s/g, '');
+    
+    // Chamada direta à API do Mercado Pago
+    // Isso evita o erro "No primary field found" pois não depende dos inputs do SDK
+    const response = await fetch(`https://api.mercadopago.com/v1/card_tokens?public_key=${import.meta.env.VITE_MP_PUBLIC_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        card_number: cleanCardNumber,
+        expiration_month: parseInt(month),
+        expiration_year: parseInt(`20${year}`),
+        security_code: cvv,
+        cardholder: {
+          name: cardHolder,
+          identification: {
+            type: "CPF", 
+            number: "19100000000" // CPF Genérico para tokenização (O real vai no payer do backend)
+          }
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.message || 'Erro ao validar cartão.');
+    }
+
+    return await response.json(); // Retorna o objeto { id: "token_xyz...", ... }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    // Validação Visual
     const fields = ['cardNumber', 'cardHolder', 'expiryDate', 'cvv'];
     let isValid = true;
     fields.forEach(field => {
@@ -93,39 +125,23 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
       return;
     }
 
-    if (!orderId) {
-      toast.error("Erro: Pedido não identificado.");
-      return;
-    }
-
     setIsProcessing(true);
 
     try {
-      const [expMonth, expYear] = expiryDate.split('/');
-      
-      // --- AQUI ESTÁ A CORREÇÃO (as any) ---
-      const mpResponse = await createCardToken({
-        cardNumber: cardNumber.replace(/\s/g, ''),
-        cardholderName: cardHolder,
-        cardExpirationMonth: expMonth,
-        cardExpirationYear: `20${expYear}`,
-        securityCode: cvv,
-        identificationType: "CPF",
-        identificationNumber: "00000000000", 
-      } as any); // <--- O "as any" resolve o erro de tipagem
+      // 1. Gera o Token Manualmente (Sem SDK visual)
+      const tokenData = await createCardTokenManual();
 
-      if (!mpResponse?.id) throw new Error("Falha ao validar cartão com o banco.");
-
+      // 2. Envia para o Backend
       const backendResponse = await fetch(`${import.meta.env.VITE_API_URL}/payment/card`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          token: mpResponse.id,
+          token: tokenData.id, // O ID do token gerado acima
           transaction_amount: amount,
           installments: installments,
           payment_method_id: cardBrand.brand,
           payer: { 
-            email: "email@cliente.com",
+            email: "cliente@email.com", // Idealmente viria do backend
             first_name: cardHolder.split(' ')[0] 
           },
           externalId: orderId,
@@ -150,7 +166,7 @@ export function CardForm({ amount, items, onSuccess }: CardFormProps) {
 
     } catch (error: any) {
       console.error(error);
-      toast.error("Erro ao processar: " + (error.message || "Tente novamente."));
+      toast.error(error.message || "Erro ao processar.");
     } finally {
       setIsProcessing(false);
     }
