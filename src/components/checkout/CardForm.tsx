@@ -1,6 +1,8 @@
 import { useState, useMemo } from 'react';
-import { CreditCard, Calendar, Lock, User } from 'lucide-react';
-import { CardBrandIcon } from '@/components/icons/CardBrandIcon';
+import { CreditCard, Calendar, Lock, User, AlertCircle } from 'lucide-react';
+import { useParams } from 'react-router-dom';
+import { toast } from "sonner"; // Mantendo o toast do seu projeto
+
 import { InstallmentSelect } from './InstallmentSelect';
 import { SecurityBadge } from './SecurityBadge';
 import { CreditCard3D } from './CreditCard3D';
@@ -17,20 +19,13 @@ import {
 } from '@/lib/cardUtils';
 
 interface CardFormProps {
-  total: number;
-  onSubmit: (data: CardFormData) => void;
-  isProcessing: boolean;
+  amount: number;
+  onSuccess: () => void;
 }
 
-export interface CardFormData {
-  cardNumber: string;
-  cardHolder: string;
-  expiryDate: string;
-  cvv: string;
-  installments: number;
-}
-
-export function CardForm({ total, onSubmit, isProcessing }: CardFormProps) {
+export function CardForm({ amount, onSuccess }: CardFormProps) {
+  const { orderId } = useParams();
+  
   const [cardNumber, setCardNumber] = useState('');
   const [cardHolder, setCardHolder] = useState('');
   const [expiryDate, setExpiryDate] = useState('');
@@ -39,14 +34,16 @@ export function CardForm({ total, onSubmit, isProcessing }: CardFormProps) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [isCardFlipped, setIsCardFlipped] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const cardBrand: CardBrandInfo = useMemo(() => detectCardBrand(cardNumber), [cardNumber]);
   const bankInfo: BankInfo | null = useMemo(() => detectBank(cardNumber), [cardNumber]);
-  const installmentOptions = useMemo(() => calculateInstallments(total), [total]);
+  const installmentOptions = useMemo(() => calculateInstallments(amount), [amount]);
 
+  // Handlers de Input
   const handleCardNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const formatted = formatCardNumber(e.target.value, cardBrand.brand);
-    const maxLength = cardBrand.brand === 'amex' ? 17 : 19; // Include spaces
+    const maxLength = cardBrand.brand === 'amex' ? 17 : 19;
     setCardNumber(formatted.slice(0, maxLength));
   };
 
@@ -67,80 +64,125 @@ export function CardForm({ total, onSubmit, isProcessing }: CardFormProps) {
 
   const validateField = (field: string) => {
     const newErrors = { ...errors };
-
     switch (field) {
       case 'cardNumber':
-        if (!cardNumber) {
-          newErrors.cardNumber = 'Número do cartão é obrigatório';
-        } else if (!validateCardNumber(cardNumber)) {
-          newErrors.cardNumber = 'Número do cartão inválido';
-        } else {
-          delete newErrors.cardNumber;
-        }
+        if (!cardNumber) newErrors.cardNumber = 'Obrigatório';
+        else if (!validateCardNumber(cardNumber)) newErrors.cardNumber = 'Inválido';
+        else delete newErrors.cardNumber;
         break;
       case 'cardHolder':
-        if (!cardHolder.trim()) {
-          newErrors.cardHolder = 'Nome do titular é obrigatório';
-        } else if (cardHolder.trim().split(' ').length < 2) {
-          newErrors.cardHolder = 'Digite o nome completo';
-        } else {
-          delete newErrors.cardHolder;
-        }
+        if (!cardHolder.trim()) newErrors.cardHolder = 'Obrigatório';
+        else if (cardHolder.trim().split(' ').length < 2) newErrors.cardHolder = 'Nome completo';
+        else delete newErrors.cardHolder;
         break;
       case 'expiryDate':
-        if (!expiryDate) {
-          newErrors.expiryDate = 'Data de validade é obrigatória';
-        } else if (!validateExpiryDate(expiryDate)) {
-          newErrors.expiryDate = 'Data inválida ou expirada';
-        } else {
-          delete newErrors.expiryDate;
-        }
+        if (!expiryDate) newErrors.expiryDate = 'Obrigatório';
+        else if (!validateExpiryDate(expiryDate)) newErrors.expiryDate = 'Inválido';
+        else delete newErrors.expiryDate;
         break;
       case 'cvv':
-        if (!cvv) {
-          newErrors.cvv = 'CVV é obrigatório';
-        } else if (cvv.length < cardBrand.cvvLength) {
-          newErrors.cvv = `CVV deve ter ${cardBrand.cvvLength} dígitos`;
-        } else {
-          delete newErrors.cvv;
-        }
+        if (!cvv) newErrors.cvv = 'Obrigatório';
+        else if (cvv.length < cardBrand.cvvLength) newErrors.cvv = 'Incompleto';
+        else delete newErrors.cvv;
         break;
     }
-
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // --- LÓGICA DE PAGAMENTO CORRIGIDA ---
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Validate all fields
+    // 1. Validação Visual
     const fields = ['cardNumber', 'cardHolder', 'expiryDate', 'cvv'];
-    fields.forEach(field => {
-      setTouched(prev => ({ ...prev, [field]: true }));
-    });
-
     let isValid = true;
     fields.forEach(field => {
-      if (!validateField(field)) {
-        isValid = false;
-      }
+      setTouched(prev => ({ ...prev, [field]: true }));
+      if (!validateField(field)) isValid = false;
     });
 
-    if (isValid) {
-      onSubmit({
-        cardNumber,
-        cardHolder,
-        expiryDate,
-        cvv,
-        installments,
+    if (!isValid) {
+      toast.error("Verifique os dados em vermelho.");
+      return;
+    }
+
+    if (!orderId) {
+      toast.error("Erro: Pedido não identificado.");
+      return;
+    }
+
+    setIsProcessing(true);
+
+    try {
+      // 2. Tokenização via API Direta (Correção do Erro TypeScript)
+      const [expMonth, expYear] = expiryDate.split('/');
+      
+      const mpResponse = await fetch(`https://api.mercadopago.com/v1/card_tokens?public_key=${import.meta.env.VITE_MP_PUBLIC_KEY}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          card_number: cardNumber.replace(/\s/g, ''),
+          cardholder: {
+            name: cardHolder,
+            identification: {
+              type: "CPF",
+              number: "00000000000" // Se você tiver input de CPF, coloque aqui. Se não, o MP pode aceitar genérico em testes.
+            }
+          },
+          security_code: cvv,
+          expiration_month: parseInt(expMonth),
+          expiration_year: parseInt(`20${expYear}`)
+        })
       });
+
+      const tokenData = await mpResponse.json();
+
+      if (tokenData.status && tokenData.status >= 400) {
+        throw new Error(tokenData.message || "Erro ao validar cartão.");
+      }
+
+      if (!tokenData.id) throw new Error("Não foi possível gerar o token do cartão.");
+
+      // 3. Envio para o Backend (Robô)
+      const backendResponse = await fetch(`${import.meta.env.VITE_API_URL}/payment/card`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: tokenData.id,
+          transaction_amount: amount,
+          installments: installments,
+          payment_method_id: cardBrand.brand, // ex: visa, master
+          payer: { 
+            email: "email@cliente.com",
+            first_name: cardHolder.split(' ')[0] 
+          },
+          externalId: orderId
+        }),
+      });
+
+      const result = await backendResponse.json();
+
+      if (result.status === 'approved') {
+        toast.success("Pagamento Confirmado!");
+        onSuccess();
+      } else {
+        toast.error(`Pagamento não aprovado: ${result.status_detail || 'Tente outro cartão'}`);
+      }
+
+    } catch (error: any) {
+      console.error(error);
+      toast.error("Erro ao processar: " + (error.message || "Tente novamente."));
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      {/* 3D Credit Card Preview */}
+      {/* Visualização 3D */}
       <CreditCard3D
         cardNumber={cardNumber}
         cardHolder={cardHolder}
@@ -151,11 +193,9 @@ export function CardForm({ total, onSubmit, isProcessing }: CardFormProps) {
         isFlipped={isCardFlipped}
       />
 
-      {/* Card Number */}
+      {/* Input Número */}
       <div>
-        <label className="block text-sm font-medium text-muted-foreground mb-2">
-          Número do Cartão
-        </label>
+        <label className="block text-sm font-medium text-muted-foreground mb-2">Número do Cartão</label>
         <div className="relative">
           <CreditCard className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
           <input
@@ -166,19 +206,18 @@ export function CardForm({ total, onSubmit, isProcessing }: CardFormProps) {
             onBlur={() => handleBlur('cardNumber')}
             placeholder="0000 0000 0000 0000"
             className={`checkout-input pl-12 ${touched.cardNumber && errors.cardNumber ? 'border-destructive' : ''}`}
-            autoComplete="cc-number"
           />
         </div>
         {touched.cardNumber && errors.cardNumber && (
-          <p className="mt-1.5 text-xs text-destructive">{errors.cardNumber}</p>
+          <p className="mt-1.5 text-xs text-destructive flex items-center gap-1">
+            <AlertCircle className="w-3 h-3" /> {errors.cardNumber}
+          </p>
         )}
       </div>
 
-      {/* Card Holder */}
+      {/* Input Nome */}
       <div>
-        <label className="block text-sm font-medium text-muted-foreground mb-2">
-          Nome no Cartão
-        </label>
+        <label className="block text-sm font-medium text-muted-foreground mb-2">Nome no Cartão</label>
         <div className="relative">
           <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
           <input
@@ -188,20 +227,19 @@ export function CardForm({ total, onSubmit, isProcessing }: CardFormProps) {
             onBlur={() => handleBlur('cardHolder')}
             placeholder="NOME COMO ESTÁ NO CARTÃO"
             className={`checkout-input pl-12 uppercase ${touched.cardHolder && errors.cardHolder ? 'border-destructive' : ''}`}
-            autoComplete="cc-name"
           />
         </div>
         {touched.cardHolder && errors.cardHolder && (
-          <p className="mt-1.5 text-xs text-destructive">{errors.cardHolder}</p>
+          <p className="mt-1.5 text-xs text-destructive flex items-center gap-1">
+            <AlertCircle className="w-3 h-3" /> {errors.cardHolder}
+          </p>
         )}
       </div>
 
-      {/* Expiry & CVV */}
+      {/* Input Validade e CVV */}
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="block text-sm font-medium text-muted-foreground mb-2">
-            Validade
-          </label>
+          <label className="block text-sm font-medium text-muted-foreground mb-2">Validade</label>
           <div className="relative">
             <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
             <input
@@ -212,17 +250,14 @@ export function CardForm({ total, onSubmit, isProcessing }: CardFormProps) {
               onBlur={() => handleBlur('expiryDate')}
               placeholder="MM/AA"
               className={`checkout-input pl-12 ${touched.expiryDate && errors.expiryDate ? 'border-destructive' : ''}`}
-              autoComplete="cc-exp"
             />
           </div>
           {touched.expiryDate && errors.expiryDate && (
-            <p className="mt-1.5 text-xs text-destructive">{errors.expiryDate}</p>
+             <p className="mt-1.5 text-xs text-destructive">{errors.expiryDate}</p>
           )}
         </div>
         <div>
-          <label className="block text-sm font-medium text-muted-foreground mb-2">
-            CVV
-          </label>
+          <label className="block text-sm font-medium text-muted-foreground mb-2">CVV</label>
           <div className="relative">
             <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
             <input
@@ -231,48 +266,44 @@ export function CardForm({ total, onSubmit, isProcessing }: CardFormProps) {
               value={cvv}
               onChange={handleCvvChange}
               onFocus={() => setIsCardFlipped(true)}
-              onBlur={() => {
-                setIsCardFlipped(false);
-                handleBlur('cvv');
-              }}
+              onBlur={() => { setIsCardFlipped(false); handleBlur('cvv'); }}
               placeholder={cardBrand.brand === 'amex' ? '0000' : '000'}
               className={`checkout-input pl-12 ${touched.cvv && errors.cvv ? 'border-destructive' : ''}`}
-              autoComplete="cc-csc"
             />
           </div>
           {touched.cvv && errors.cvv && (
-            <p className="mt-1.5 text-xs text-destructive">{errors.cvv}</p>
+             <p className="mt-1.5 text-xs text-destructive">{errors.cvv}</p>
           )}
         </div>
       </div>
 
-      {/* Installments */}
+      {/* Seleção de Parcelas */}
       <InstallmentSelect
         options={installmentOptions}
         selectedInstallment={installments}
         onSelect={setInstallments}
       />
 
-      {/* Security Info */}
+      {/* Selo de Segurança */}
       <div className="pt-2">
         <SecurityBadge variant="inline" />
       </div>
 
-      {/* Submit Button */}
+      {/* Botão de Pagar */}
       <button
         type="submit"
         disabled={isProcessing}
-        className="btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+        className="btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed h-12 text-base"
       >
         {isProcessing ? (
           <>
             <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            <span>Processando...</span>
+            <span>Processando Pagamento...</span>
           </>
         ) : (
           <>
             <Lock className="w-5 h-5" />
-            <span>Pagar com Segurança</span>
+            <span>Pagar {installments}x de {installmentOptions.find(i => i.installments === installments)?.value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
           </>
         )}
       </button>

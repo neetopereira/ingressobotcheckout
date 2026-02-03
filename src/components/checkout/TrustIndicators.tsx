@@ -1,46 +1,23 @@
-import { Shield, Zap, Users, Award } from 'lucide-react';
+import { LockKeyhole } from 'lucide-react';
 
 export function TrustIndicators() {
-  const indicators = [
-    {
-      icon: Shield,
-      title: 'Pagamento Seguro',
-      description: 'Criptografia de ponta a ponta',
-    },
-    {
-      icon: Zap,
-      title: 'Entrega Instantânea',
-      description: 'Ingresso direto no WhatsApp',
-    },
-    {
-      icon: Users,
-      title: '+50.000 Ingressos',
-      description: 'Vendidos com sucesso',
-    },
-    {
-      icon: Award,
-      title: 'Garantia Total',
-      description: 'Evento cancelado, dinheiro de volta',
-    },
-  ];
-
   return (
-    <div className="grid grid-cols-2 gap-3">
-      {indicators.map((item, index) => (
-        <div
-          key={index}
-          className="trust-indicator animate-fade-in-up"
-          style={{ animationDelay: `${index * 100}ms` }}
-        >
-          <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-            <item.icon className="w-4 h-4 text-primary" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-medium truncate">{item.title}</p>
-            <p className="text-xs text-muted-foreground truncate">{item.description}</p>
-          </div>
+    <div className="w-full mt-6">
+      <div className="flex items-start gap-3 p-4 rounded-lg bg-secondary/20 border border-border/50">
+        <div className="mt-0.5 p-1.5 bg-background rounded-md shadow-sm border border-border">
+           <LockKeyhole className="w-4 h-4 text-primary" />
         </div>
-      ))}
+        
+        <div className="space-y-1">
+          <h4 className="text-sm font-medium text-foreground">
+            Ambiente Verificado e Seguro
+          </h4>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Suas informações estão protegidas por criptografia de ponta a ponta (SSL). 
+            Nenhum dado sensível do seu cartão é armazenado em nossos servidores.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

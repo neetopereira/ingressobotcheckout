@@ -1,5 +1,4 @@
-import { useState } from 'react';
-import { ChevronDown, Check } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { InstallmentOption, formatCurrency } from '@/lib/cardUtils';
 
 interface InstallmentSelectProps {
@@ -9,76 +8,46 @@ interface InstallmentSelectProps {
 }
 
 export function InstallmentSelect({ options, selectedInstallment, onSelect }: InstallmentSelectProps) {
-  const [isOpen, setIsOpen] = useState(false);
-  
-  const selectedOption = options.find(opt => opt.installments === selectedInstallment) || options[0];
-
   return (
-    <div className="relative">
-      <label className="block text-sm font-medium text-muted-foreground mb-2">
+    <div className="space-y-2">
+      <label className="block text-sm font-medium text-muted-foreground">
         Parcelas
       </label>
       
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-full checkout-input flex items-center justify-between cursor-pointer"
+      <Select 
+        value={selectedInstallment.toString()} 
+        onValueChange={(value) => onSelect(Number(value))}
       >
-        <span>
-          {selectedOption.installments}x de {formatCurrency(selectedOption.value)}
-          {selectedOption.hasInterest && (
-            <span className="text-muted-foreground ml-1">
-              ({selectedOption.interestRate.toFixed(2)}% a.m.)
-            </span>
-          )}
-          {!selectedOption.hasInterest && selectedOption.installments > 1 && (
-            <span className="text-success ml-1">sem juros</span>
-          )}
-        </span>
-        <ChevronDown className={`w-5 h-5 text-muted-foreground transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-      </button>
-
-      {isOpen && (
-        <>
-          <div 
-            className="fixed inset-0 z-40" 
-            onClick={() => setIsOpen(false)}
-          />
-          <div className="absolute z-50 top-full left-0 right-0 mt-2 py-2 rounded-xl bg-card border border-border shadow-lg max-h-64 overflow-y-auto">
-            {options.map((option) => (
-              <button
-                key={option.installments}
-                type="button"
-                onClick={() => {
-                  onSelect(option.installments);
-                  setIsOpen(false);
-                }}
-                className={`w-full px-4 py-3 flex items-center justify-between text-left transition-colors hover:bg-secondary/50 ${
-                  option.installments === selectedInstallment ? 'bg-primary/10' : ''
-                }`}
-              >
-                <div className="flex flex-col">
-                  <span className="font-medium">
-                    {option.installments}x de {formatCurrency(option.value)}
-                  </span>
+        <SelectTrigger className="w-full h-12 bg-background border-input focus:ring-primary/20">
+           <SelectValue placeholder="Selecione o parcelamento" />
+        </SelectTrigger>
+        
+        <SelectContent className="max-h-[300px] z-[9999]">
+          {options.map((option) => (
+            <SelectItem 
+              key={option.installments} 
+              value={option.installments.toString()}
+              className="py-3 cursor-pointer"
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                <span className="font-medium">
+                  {option.installments}x de {formatCurrency(option.value)}
+                </span>
+                
+                {option.hasInterest ? (
                   <span className="text-xs text-muted-foreground">
-                    {option.hasInterest ? (
-                      <>Total: {formatCurrency(option.total)} ({option.interestRate.toFixed(2)}% a.m.)</>
-                    ) : option.installments > 1 ? (
-                      <span className="text-success">sem juros</span>
-                    ) : (
-                      <>Total: {formatCurrency(option.total)}</>
-                    )}
+                    (Total: {formatCurrency(option.total)})
                   </span>
-                </div>
-                {option.installments === selectedInstallment && (
-                  <Check className="w-5 h-5 text-primary" />
+                ) : option.installments > 1 && (
+                  <span className="text-xs text-green-600 font-bold bg-green-100 px-2 py-0.5 rounded-full">
+                    Sem Juros
+                  </span>
                 )}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
+              </div>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }
