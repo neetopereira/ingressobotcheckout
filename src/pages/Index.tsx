@@ -130,6 +130,7 @@ export default function Index() {
               {/* AQUI ESTÁ A MÁGICA: Passamos o finalTotal com a taxa */}
               <CardForm 
                 amount={finalTotal} 
+                items={orderData.items}
                 onSuccess={() => setIsSuccess(true)}
               />
             </div>
