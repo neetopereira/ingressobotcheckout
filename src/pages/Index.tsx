@@ -6,11 +6,12 @@ import { CardForm } from '@/components/checkout/CardForm';
 import { OrderSummary } from '@/components/checkout/OrderSummary';
 import { TrustIndicators } from '@/components/checkout/TrustIndicators';
 import { SuccessScreen } from '@/components/checkout/SuccessScreen';
-import { Loader2, AlertCircle } from 'lucide-react';
+import { Loader2, AlertCircle, CheckCircle2 } from 'lucide-react'; // Adicionei CheckCircle2
 import { Button } from '@/components/ui/button';
 
-// Interface para tipar os dados que vêm do Backend
 interface OrderData {
+  id: string;
+  status: string; // <--- Novo campo que vem do Robô
   eventName: string;
   eventDate: string;
   eventLocation: string;
@@ -26,7 +27,6 @@ export default function Index() {
   const [error, setError] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
 
-  // Busca os dados assim que a página abre
   useEffect(() => {
     if (!orderId) {
       setError(true);
@@ -50,27 +50,27 @@ export default function Index() {
       });
   }, [orderId]);
 
-  // --- CÁLCULO DA TAXA ---
-  // Se orderData existe, calculamos. Se não, é 0.
+  // Cálculo da Taxa
   const subTotal = orderData?.total || 0;
-  const serviceFee = subTotal * 0.10; // 10% de taxa
+  const serviceFee = subTotal * 0.10; 
   const finalTotal = subTotal + serviceFee;
-  // -----------------------
 
-  // Tela de Sucesso
-  if (isSuccess && orderData) {
+  // --- BLOQUEIO DE SEGURANÇA 👇 ---
+  // Se o pedido já estiver PAGO (status === 'PAID'), mostra a tela de sucesso direto.
+  if (orderData?.status === 'PAID' || isSuccess) {
     return (
       <SuccessScreen
-        orderNumber={orderId?.slice(0, 8).toUpperCase() || "123456"}
-        eventName={orderData.eventName}
-        total={finalTotal} // Mostra o valor final pago na tela de sucesso também
+        orderNumber={orderData?.id?.slice(0, 8).toUpperCase() || orderId?.slice(0, 8).toUpperCase() || "OK"}
+        eventName={orderData?.eventName || "Evento"}
+        total={finalTotal}
         installments={1}
         installmentValue={finalTotal}
+        // Opcional: Você pode mudar a mensagem na SuccessScreen para dizer "Pedido Já Pago"
       />
     );
   }
+  // -------------------------------
 
-  // Tela de Carregamento
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -82,7 +82,6 @@ export default function Index() {
     );
   }
 
-  // Tela de Erro (Link inválido ou expirado)
   if (error || !orderData) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background p-4 text-center">
@@ -91,19 +90,29 @@ export default function Index() {
         </div>
         <h1 className="text-2xl font-bold mb-2">Pedido não encontrado</h1>
         <p className="text-muted-foreground mb-6 max-w-md">
-          O link que você acessou parece ser inválido ou expirou. Por favor, inicie a compra novamente pelo WhatsApp.
+          Link inválido. Retorne ao WhatsApp.
         </p>
-        <Button onClick={() => window.location.href = 'https://wa.me/'}>
-          Voltar para o WhatsApp
-        </Button>
       </div>
     );
   }
 
-  // Tela Principal de Checkout
+  // Se o pedido foi cancelado ou expirado
+  if (orderData.status === 'CANCELED') {
+     return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background p-4 text-center">
+        <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+          <AlertCircle className="w-8 h-8 text-gray-600" />
+        </div>
+        <h1 className="text-2xl font-bold mb-2">Pedido Expirado</h1>
+        <p className="text-muted-foreground mb-6 max-w-md">
+          Este pedido foi cancelado ou já expirou. Gere um novo link no WhatsApp.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-background">
-      {/* Background Effects */}
       <div className="fixed inset-0 pointer-events-none">
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-primary/5 blur-[100px] rounded-full" />
         <div className="absolute bottom-0 right-0 w-[600px] h-[300px] bg-accent/5 blur-[100px] rounded-full" />
@@ -114,7 +123,6 @@ export default function Index() {
       <main className="flex-1 w-full max-w-5xl mx-auto px-4 py-8 md:py-12 relative z-10">
         <div className="grid lg:grid-cols-[1fr,400px] gap-8 lg:gap-12">
           
-          {/* Coluna da Esquerda: Formulário */}
           <div className="space-y-8 order-2 lg:order-1">
             <div className="animate-fade-in-up">
               <h1 className="text-2xl md:text-3xl font-bold mb-2">
@@ -127,10 +135,9 @@ export default function Index() {
             </div>
 
             <div className="checkout-card p-6 md:p-8 animate-fade-in-up delay-100">
-              {/* AQUI ESTÁ A MÁGICA: Passamos o finalTotal com a taxa */}
               <CardForm 
                 amount={finalTotal} 
-                items={orderData.items}
+                items={orderData.items} 
                 onSuccess={() => setIsSuccess(true)}
               />
             </div>
@@ -140,7 +147,6 @@ export default function Index() {
             </div>
           </div>
 
-          {/* Coluna da Direita: Resumo do Pedido */}
           <div className="order-1 lg:order-2 lg:sticky lg:top-8 h-fit animate-fade-in-up delay-100">
             <OrderSummary
               eventName={orderData.eventName}
@@ -148,9 +154,6 @@ export default function Index() {
               eventLocation={orderData.eventLocation}
               items={orderData.items}
               buyerName={orderData.buyerName}
-              // O OrderSummary provavelmente calcula a taxa internamente ou aceita props de taxa.
-              // Se ele esperar apenas os itens e calcular visualmente, está tudo bem.
-              // Se ele precisar do total explícito, você pode precisar ajustar aqui também.
             />
           </div>
 
