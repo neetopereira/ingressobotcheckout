@@ -50,15 +50,22 @@ export default function Index() {
       });
   }, [orderId]);
 
+  // --- CÁLCULO DA TAXA ---
+  // Se orderData existe, calculamos. Se não, é 0.
+  const subTotal = orderData?.total || 0;
+  const serviceFee = subTotal * 0.10; // 10% de taxa
+  const finalTotal = subTotal + serviceFee;
+  // -----------------------
+
   // Tela de Sucesso
   if (isSuccess && orderData) {
     return (
       <SuccessScreen
         orderNumber={orderId?.slice(0, 8).toUpperCase() || "123456"}
         eventName={orderData.eventName}
-        total={orderData.total}
-        installments={1} // Você pode passar o estado real se levantar ele pra cá
-        installmentValue={orderData.total}
+        total={finalTotal} // Mostra o valor final pago na tela de sucesso também
+        installments={1}
+        installmentValue={finalTotal}
       />
     );
   }
@@ -120,8 +127,9 @@ export default function Index() {
             </div>
 
             <div className="checkout-card p-6 md:p-8 animate-fade-in-up delay-100">
+              {/* AQUI ESTÁ A MÁGICA: Passamos o finalTotal com a taxa */}
               <CardForm 
-                amount={orderData.total}
+                amount={finalTotal} 
                 onSuccess={() => setIsSuccess(true)}
               />
             </div>
@@ -139,6 +147,9 @@ export default function Index() {
               eventLocation={orderData.eventLocation}
               items={orderData.items}
               buyerName={orderData.buyerName}
+              // O OrderSummary provavelmente calcula a taxa internamente ou aceita props de taxa.
+              // Se ele esperar apenas os itens e calcular visualmente, está tudo bem.
+              // Se ele precisar do total explícito, você pode precisar ajustar aqui também.
             />
           </div>
 
