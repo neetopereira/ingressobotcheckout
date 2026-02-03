@@ -6,12 +6,12 @@ import { CardForm } from '@/components/checkout/CardForm';
 import { OrderSummary } from '@/components/checkout/OrderSummary';
 import { TrustIndicators } from '@/components/checkout/TrustIndicators';
 import { SuccessScreen } from '@/components/checkout/SuccessScreen';
-import { Loader2, AlertCircle, CheckCircle2 } from 'lucide-react'; // Adicionei CheckCircle2
+import { Loader2, AlertCircle } from 'lucide-react'; 
 import { Button } from '@/components/ui/button';
 
 interface OrderData {
   id: string;
-  status: string; // <--- Novo campo que vem do Robô
+  status: string; // O campo essencial para o bloqueio
   eventName: string;
   eventDate: string;
   eventLocation: string;
@@ -55,8 +55,8 @@ export default function Index() {
   const serviceFee = subTotal * 0.10; 
   const finalTotal = subTotal + serviceFee;
 
-  // --- BLOQUEIO DE SEGURANÇA 👇 ---
-  // Se o pedido já estiver PAGO (status === 'PAID'), mostra a tela de sucesso direto.
+  // --- TRAVA DE SEGURANÇA 🔒 ---
+  // Se o robô disser que está PAID, mostramos a tela de sucesso direto.
   if (orderData?.status === 'PAID' || isSuccess) {
     return (
       <SuccessScreen
@@ -65,7 +65,6 @@ export default function Index() {
         total={finalTotal}
         installments={1}
         installmentValue={finalTotal}
-        // Opcional: Você pode mudar a mensagem na SuccessScreen para dizer "Pedido Já Pago"
       />
     );
   }
@@ -96,7 +95,7 @@ export default function Index() {
     );
   }
 
-  // Se o pedido foi cancelado ou expirado
+  // Se o pedido foi cancelado
   if (orderData.status === 'CANCELED') {
      return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background p-4 text-center">
@@ -105,7 +104,7 @@ export default function Index() {
         </div>
         <h1 className="text-2xl font-bold mb-2">Pedido Expirado</h1>
         <p className="text-muted-foreground mb-6 max-w-md">
-          Este pedido foi cancelado ou já expirou. Gere um novo link no WhatsApp.
+          Este pedido não está mais disponível.
         </p>
       </div>
     );
